@@ -1,4 +1,5 @@
 import psycopg2
+from psycopg2 import sql
 
 
 # Global variables
@@ -23,26 +24,21 @@ processed BOOLEAN DEFAULT FALSE
 )
 """
 
-LIST_TABLE_CONTENTS_QUERY = 'SELECT * FROM "{fname}"'
-USER_TABLE_KEY_QUERY = "SELECT * FROM users WHERE userid='{fuser}'"
+USER_TABLE_KEY_QUERY = "SELECT * FROM users WHERE userid=%s"
 USER_TABLE_INSERT_QUERY = (
     "INSERT INTO users (userid, name, email, photos, metadata) VALUES (%s,%s,%s,%s,%s)"
 )
 USER_TABLE_DELETE_QUERY = "DELETE FROM users WHERE userid=%s"
-USER_LOCK_ROW_QUERY = "SELECT * FROM users WHERE userid = '{fuser}' FOR UPDATE"
-USER_UPDATE_PHOTOS_QUERY_KEY = (
-    "UPDATE users SET photos = {fphotos} WHERE userid = '{fuser}'"
-)
+USER_LOCK_ROW_QUERY = "SELECT * FROM users WHERE userid = %s FOR UPDATE"
+USER_UPDATE_PHOTOS_QUERY_KEY = "UPDATE users SET photos = %s WHERE userid = %s"
 
-IMAGE_TABLE_KEY_QUERY = "SELECT * FROM images WHERE imageid='{fimage}'"
+IMAGE_TABLE_KEY_QUERY = "SELECT * FROM images WHERE imageid=%s"
 IMAGE_TABLE_INSERT_QUERY = (
     "INSERT INTO images (imageid, userid, metadata, processed) VALUES (%s,%s,%s,%s)"
 )
 IMAGE_TABLE_DELETE_QUERY = "DELETE FROM images WHERE imageid=%s"
-IMAGE_LOCK_ROW_QUERY = "SELECT * FROM images WHERE imageid = '{fimage}' FOR UPDATE"
-IMAGE_UPDATE_PROCESSED_QUERY_KEY = (
-    "UPDATE images SET processed = {fvalue} WHERE imageid = '{fimage}'"
-)
+IMAGE_LOCK_ROW_QUERY = "SELECT * FROM images WHERE imageid = %s FOR UPDATE"
+IMAGE_UPDATE_PROCESSED_QUERY_KEY = "UPDATE images SET processed = %s WHERE imageid = %s"
 
 
 class UserDetails:
@@ -96,8 +92,8 @@ class ImageDetails:
         return cls(
             json_data["imageid"],
             json_data["userid"],
-            json_data["processed"],
             json_data["metadata"],
+            json_data["processed"],
         )
 
     def __str__(self):
@@ -185,7 +181,7 @@ class Gandalf:
         self.ensure_db_is_connected()
         try:
             with self.db_conn.cursor() as cursor:
-                cursor.execute(LIST_TABLE_CONTENTS_QUERY.format(fname=table_name))
+                cursor.execute(sql.SQL("SELECT * FROM {}").format(sql.Identifier(table_name)))
                 table_contents = list()
                 results = cursor.fetchall()
                 for result in results:
@@ -211,7 +207,7 @@ class Gandalf:
         self.ensure_db_is_connected()
         try:
             with self.db_conn.cursor() as cursor:
-                cursor.execute(USER_TABLE_KEY_QUERY.format(fuser=userid))
+                cursor.execute(USER_TABLE_KEY_QUERY, (userid,))
                 result = cursor.fetchone()
                 user_object = get_user_object(result)
                 self.db_conn.commit()
@@ -224,7 +220,7 @@ class Gandalf:
         self.ensure_db_is_connected()
         try:
             with self.db_conn.cursor() as cursor:
-                cursor.execute(IMAGE_TABLE_KEY_QUERY.format(fimage=imageid))
+                cursor.execute(IMAGE_TABLE_KEY_QUERY, (imageid,))
                 result = cursor.fetchone()
                 image_object = get_image_object(result)
                 self.db_conn.commit()
@@ -317,18 +313,17 @@ class Gandalf:
         try:
             with self.db_conn.cursor() as cursor:
                 # Lock row first
-                cursor.execute(USER_LOCK_ROW_QUERY.format(fuser=userid), (1,))
+                cursor.execute(USER_LOCK_ROW_QUERY, (userid,))
                 result = cursor.fetchone()
                 user_details = get_user_object(result)
+                if user_details is None:
+                    return -1
                 photos = user_details.photos
                 if increment:
                     photos = photos + 1
                 else:
                     photos = photos - 1
-                cursor.execute(
-                    USER_UPDATE_PHOTOS_QUERY_KEY.format(fuser=userid, fphotos=photos),
-                    (100, 1),
-                )
+                cursor.execute(USER_UPDATE_PHOTOS_QUERY_KEY, (photos, userid))
                 self.db_conn.commit()
             return 1
         except Exception as e:
@@ -340,18 +335,15 @@ class Gandalf:
         try:
             with self.db_conn.cursor() as cursor:
                 # Lock row first
-                cursor.execute(IMAGE_LOCK_ROW_QUERY.format(fimage=imageid), (1,))
+                cursor.execute(IMAGE_LOCK_ROW_QUERY, (imageid,))
                 result = cursor.fetchone()
                 image_details = get_image_object(result)
+                if image_details is None:
+                    return -1
                 print(
                     f"Toggling image process value for imageid {image_details.imageid} from {image_details.processed} to {is_processed}"
                 )
-                cursor.execute(
-                    IMAGE_UPDATE_PROCESSED_QUERY_KEY.format(
-                        fimage=imageid, fvalue=is_processed
-                    ),
-                    (100, 1),
-                )
+                cursor.execute(IMAGE_UPDATE_PROCESSED_QUERY_KEY, (is_processed, imageid))
                 self.db_conn.commit()
             return 1
         except Exception as e:
